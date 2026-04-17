@@ -19,9 +19,33 @@ def root():
 
 @app.post('/chat')
 def chat(req: ChatRequest):
-    context = random.choice(docs)
+    best_doc = None
+    best_score = 0
+    question_words = req.question.lower().split()
+
+    for doc in docs:
+        doc_splited = doc.lower().split()
+        score = 0
+        for word in question_words:
+        
+            if word in doc_splited:
+                score += 1
+
+        if score > best_score:
+            best_score = score
+            best_doc = doc
+
+    if best_doc:
+        return {
+            "question": req.question,
+            "context": best_doc,
+            "score": best_score,
+            "answer": f"based on this: {best_doc}"
+        }
+
     return {
-        "question": req.question,
-        "context": context,
-        "answer": f"Based on this: {context}"
+        "answer": "I don't know"
     }
+
+        
+
