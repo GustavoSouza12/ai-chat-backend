@@ -1,65 +1,121 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
-import random
+from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
+from dotenv import load_dotenv
+from openai import OpenAI
+import numpy as np
+import os
 
+load_dotenv()
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# -----------------------------
+# APP
+# -----------------------------
+app = FastAPI()
+
+# -----------------------------
+# MODEL (EMBEDDINGS)
+# -----------------------------
+model = SentenceTransformer('all-MiniLM-L6-v2')
+
+# -----------------------------
+# DATASET (BASE KNOWLEDGE)
+# -----------------------------
+docs = [
+    "Santos has 3 Libertadores titles",
+    "Santos is one of the biggest football clubs in Brazil",
+    "Santos once stopped a war",
+    "Pelé played for Santos"
+]
+
+# Pré-computa embeddings dos docs (importante pra performance)
+doc_embeddings = model.encode(docs)
+
+# -----------------------------
+# INPUT MODEL
+# -----------------------------
 class ChatRequest(BaseModel):
     question: str
 
-def text_to_vector(text):
-    words = text.lower().split()
-    return {word: words.count(word) for word in words}
+# -----------------------------
+# RETRIEVAL FUNCTION
+# -----------------------------
+import numpy as np
 
-def similarity(vec1, vec2):
-    score = 0
+def get_top_docs(question_embedding, doc_embeddings, docs, k=2):
+    
+    # 1. similarity
+    scores = cosine_similarity([question_embedding], doc_embeddings)[0]
 
-    for word in vec1:
-        if word in vec2:
-            score += min(vec1[word], vec2[word])
+    # 2. index top k
+    top_indices = np.argsort(scores)[-k:][::-1]
 
-    return score
+    # 3. get docs
+    top_docs = [docs[i] for i in top_indices]
 
-app = FastAPI()
+    # 4. get scores
+    top_scores = [scores[i] for i in top_indices]
 
-docs = [
-    "Santos is the greatest team on earth",
-    "Santos has 3 Libertadores titles",
-    "Santos once stopped a war"
-]
+    return top_docs, top_scores
 
 def generate_answer(question, context):
-    return f"based in {context}, i can answer your {question}"
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {
+                "role": "system",
+                "content": "You are a strict assistant. ONLY answer using the provided context. If the answer is not in the context, say: I don't know based on the provided context."
+            },
+            {
+                "role": "user",
+                "content": f"Context: {context}\nQuestion: {question}"
+            }
+        ]
+    )
 
-@app.get('/')
+    return response.choices[0].message.content
+
+# -----------------------------
+# ROOT
+# -----------------------------
+@app.get("/")
 def root():
-    return {'server': 'ok'}
+    return {"status": "ok"}
 
-@app.post('/chat')
+# -----------------------------
+# CHAT ENDPOINT (RAG CORE)
+# -----------------------------
+@app.post("/chat")
 def chat(req: ChatRequest):
-    question_vec = text_to_vector(req.question)
 
-    best_doc = None
-    best_score = 0
+    # 1. embedding da pergunta
+    question_embedding = model.encode(req.question)
 
-    for doc in docs:
-        doc_vec = text_to_vector(doc)
+    # 2. retrieval (busca do melhor contexto)
+    top_docs, scores = get_top_docs(
+        question_embedding,
+        doc_embeddings,
+        docs,
+        k=2
+    )
 
-        score = similarity(question_vec, doc_vec)
+    context = "\n".join(top_docs)
 
-        if score > best_score:
-            best_score = score
-            best_doc = doc
-
-    answer = generate_answer(req.question, best_doc)
-    if best_doc:
+    # 3. geração simulada (LLM fake por enquanto)
+    best_score = scores[0]
+    if best_score < 0.5:
         return {
             "question": req.question,
-            "context": best_doc,
-            "score": best_score,
-            "answer": answer
+            "answer": "I don't know based on the available data."
         }
+    
+    answer = generate_answer(req.question, context)
 
+    # 4. resposta final
     return {
-        "answer": "I don't know"
+        "question": req.question,
+        "context": context,
+        "score": float(best_score),
+        "answer": answer
     }
-        
-
