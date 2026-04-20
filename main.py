@@ -2,64 +2,27 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 import random 
 from sentence_transformers import SentenceTransformer
-from sklearn.metrics.pairwise import cosine_similarity
-from openai import OpenAI
+from services.llm import generate_answer
+from services.retrieval import get_top_docs
+from services.data_loader import load_data, dataframe_to_docs
 import numpy as np
-import os
-from dotenv import load_dotenv
-
-load_dotenv()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 app = FastAPI()
 
 class ChatRequest(BaseModel):
     question: str
+    session_id: str
 
-docs = [
-    "Pelé é um jogador de futebol que jogou no Santos",
-    "Pelé tem 3 copas do mundo",
-    "ele é muito bom e jogou no Santos"
-]
 
-model = SentenceTransformer('all-MiniLM-L6-v2')
 
+model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
+
+df = load_data("data/faturamento_historico.xlsx")
+docs = dataframe_to_docs(df)
 doc_embeddings = model.encode(docs)
 
-def generate_top_docs(question_embedding, doc_embeddings, docs, k=2):
-    scores = cosine_similarity([question_embedding], doc_embeddings)[0]
 
-    top_indices = np.argsort(scores)[-k:][::-1]
-    top_docs = [docs[i] for i in top_indices]
-    top_scores = [scores[i] for i in top_indices]
-
-    return top_docs, top_scores
-
-chat_history = []
-def generate_answer(question, context):
-
-        model="gpt-4o-mini",
-        messages=[
-            {
-                "role":"system",
-                "content":"You are a strict assistant. Answer ONLY using the provided context. You can use context and conversation history. If the answer is not explicitly in the context, say you don't know."
-            }
-        ]
-
-        messages.extend(chat_history)
-
-        messages.append({
-              "role": "user",
-              "content": f"Use the context below to answer. Context: {context}\nQuestion: {question}. "
-        })
-
-        response = client.chat.completions.create(
-             model="gpt-4o-mini",
-             messages=messages
-        )
-
-        return response.choices[0].message.content
-
+sessions = {}
 @app.get("/")
 def root():
     return {
@@ -68,10 +31,10 @@ def root():
 
 @app.post("/chat")
 def response(req: ChatRequest):
-
+    history = sessions.get(req.session_id,[])
     question_embedding = model.encode(req.question)
 
-    top_docs, scores = generate_top_docs(
+    top_docs, scores = get_top_docs(
         question_embedding,
         doc_embeddings,
         docs,
@@ -81,24 +44,26 @@ def response(req: ChatRequest):
     context = "\n".join(top_docs)
     best_score = scores[0]
 
-    if best_score < 0.5:
+    if best_score < 0.2:
         return {
             "answer": "I don't know..."
         }
-    answer = generate_answer(req.question, context)
-
-    chat_history.append(
+    answer = generate_answer(req.question, context, history)
+    history.append(
         {
             "role": "user",
             "content": req.question
         }
     )
 
-    chat_history.append({
+    history.append({
         "role":"assistant",
         "content": answer
     })
 
+    sessions[req.session_id] = history
+
+    sessions[req.session_id] = history[-6:]
 
     return {
         "response": req.question,
