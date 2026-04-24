@@ -41,7 +41,7 @@ def response(req: ChatRequest):
         k=2
     )
 
-    context = "\n".join(top_docs)
+    context = "[" + ",".join(top_docs) + "]"
     best_score = scores[0]
 
     if best_score < 0.2:

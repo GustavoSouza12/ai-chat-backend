@@ -1,4 +1,5 @@
 import pandas as pd
+import json
 
 def load_data(path):
     df = pd.read_excel(path)
@@ -23,11 +24,8 @@ def dataframe_to_docs(df):
         Month: {row['Anomes']}.
         Category: {row['depara']}.
         """
-        docs.append(doc)
+        docs.append(json.dumps(doc))
 
     return docs
 
 
-df = load_data("data/faturamento_historico.xlsx")
-docs = dataframe_to_docs(df)
-print(df.head())

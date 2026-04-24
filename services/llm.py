@@ -14,8 +14,23 @@ def generate_answer(question, context, history):
     messages.extend(history)
 
     messages.append({
-        "role": "user",
-        "content": f"Context:\n{context}\n\nQuestion:\n{question}"
+    "role": "user",
+    "content": f"""
+    You are analyzing structured business data.
+
+    Context (JSON records):
+    {context}
+
+    Instructions:
+    - Use ONLY the provided data
+    - Do NOT assume or invent information
+    - If the answer is not in the data, say: "I don't know based on the provided data"
+    - Be precise and objective
+    - If relevant, compare values and highlight the highest or lowest
+
+    Question:
+    {question}
+    """
     })
 
     response = client.chat.completions.create(
